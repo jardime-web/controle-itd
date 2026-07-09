@@ -521,23 +521,25 @@ function loadDB() {
 
 function saveDB(){
   try{ localStorage.setItem(DB_KEY,JSON.stringify(db)); }catch(e){}
-  // Debounce sync to Sheets — wait 1.5s after last save
   clearTimeout(_syncTimeout);
-  _syncTimeout = setTimeout(syncToSheets, 1500);
+  _syncTimeout = setTimeout(syncToSheets, 500);
 }
 
 function syncToSheets(){
   if(_syncing) return;
   _syncing = true;
   showSyncStatus('Salvando...', 'saving');
+  console.log('Sincronizando com Sheets...');
   fetch(SHEETS_URL, {
     method:'POST',
     body: JSON.stringify(db)
-  }).then(function(){
+  }).then(function(r){
+    console.log('POST status:', r.status, r.type);
     _syncing=false;
     showSyncStatus('Salvo ✓', 'ok');
     setTimeout(function(){ showSyncStatus('',''); }, 3000);
-  }).catch(function(){
+  }).catch(function(err){
+    console.log('POST erro:', err);
     _syncing=false;
     showSyncStatus('Erro ao sincronizar', 'err');
   });
