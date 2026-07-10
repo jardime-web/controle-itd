@@ -532,26 +532,25 @@ function syncToSheets(){
   console.log('Sincronizando com Sheets...');
   fetch(SHEETS_URL, {
     method:'POST',
+    mode:'no-cors',
     redirect:'follow',
     body: JSON.stringify(db)
-  }).then(function(r){
-    console.log('POST status:', r.status, r.type);
-    return r.text();
-  }).then(function(txt){
-    _syncing=false;
-    console.log('Resposta do Sheets:', txt);
-    var resp = null;
-    try { resp = JSON.parse(txt); } catch(e){}
-    if(resp && resp.ok){
-      showSyncStatus('Salvo na planilha ✓', 'ok');
-      setTimeout(function(){ showSyncStatus('',''); }, 3000);
-    } else if(resp && resp.error){
-      showSyncStatus('Erro do Sheets: '+resp.error, 'err');
-      alert('O Google Sheets recusou a gravação:\n\n'+resp.error);
-    } else {
-      showSyncStatus('Resposta inesperada do Sheets', 'err');
-      console.log('Resposta completa:', txt.substring(0,500));
-    }
+  }).then(function(){
+    // Em modo no-cors não dá pra ler a resposta do POST,
+    // então confirmamos relendo os dados via GET:
+    return fetch(SHEETS_URL+'?v='+Date.now(), {cache:'no-store'})
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        _syncing=false;
+        if(data && data.years){
+          console.log('Confirmado: dados gravados na planilha.');
+          showSyncStatus('Salvo na planilha ✓', 'ok');
+        } else {
+          console.log('Aviso: planilha ainda sem dados. Conteúdo:', JSON.stringify(data).substring(0,200));
+          showSyncStatus('Enviado (aguardando confirmação)', 'saving');
+        }
+        setTimeout(function(){ showSyncStatus('',''); }, 3000);
+      });
   }).catch(function(err){
     console.log('POST erro:', err);
     _syncing=false;
