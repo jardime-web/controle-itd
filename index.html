@@ -557,12 +557,12 @@ function graftLocalAttachments(remote){
               var ry=remote.years[y];
               var rm=ry&&ry.months&&ry.months[m];
               var rs=rm&&rm.suppliers&&rm.suppliers[c];
-              if(rs){
-                if(!rs.stepData) rs.stepData={};
-                if(!rs.stepData[st]) rs.stepData[st]={};
-                if(loc.anexo) rs.stepData[st].anexo=loc.anexo;
-                if(loc.anexo_pages) rs.stepData[st].anexo_pages=loc.anexo_pages;
-                if(loc.anexo_name&&!rs.stepData[st].anexo_name) rs.stepData[st].anexo_name=loc.anexo_name;
+              // Só restaura se o anexo ainda existir oficialmente (mesmo ID) — anexo excluído não ressuscita
+              var rsd=rs&&rs.stepData&&rs.stepData[st];
+              if(rsd&&rsd.anexo_id&&rsd.anexo_id===loc.anexo_id){
+                if(loc.anexo) rsd.anexo=loc.anexo;
+                if(loc.anexo_pages) rsd.anexo_pages=loc.anexo_pages;
+                if(loc.anexo_name&&!rsd.anexo_name) rsd.anexo_name=loc.anexo_name;
               }
             }
           });
@@ -1553,6 +1553,8 @@ function saveStepAll(stepId){
   var obsEl=document.getElementById('sf-'+stepId+'-obs');
   if(obsEl){sup.stepObs[stepId]=obsEl.value;if(!sup.stepData[stepId])sup.stepData[stepId]={};sup.stepData[stepId].obs=obsEl.value;}
   if(old!==status) sup.history.push({msg:'Etapa '+String(stepId).padStart(2,'0')+' — '+s.title+': '+S[old].label+' → '+S[status].label,time:nowStr(),type:status==='done'?'done':status==='alert'?'alert':'update'});
+  // Etapa concluída fecha sozinha; demais status mantêm aberta
+  if(status==='done') _openSteps[stepId]=false;
   saveDB();renderFlow();
 }
 
@@ -1563,6 +1565,17 @@ function handleAnexo(event,stepId){
   var sup=getMonth(nav.year,nav.month).suppliers[nav.sup];
   if(!sup.stepData) sup.stepData={};
   if(!sup.stepData[stepId]) sup.stepData[stepId]={};
+
+  // Substituição: apaga o anexo anterior por completo (local e na planilha)
+  var prevId=sup.stepData[stepId].anexo_id;
+  delete sup.stepData[stepId].anexo;
+  delete sup.stepData[stepId].anexo_name;
+  delete sup.stepData[stepId].anexo_pages;
+  delete sup.stepData[stepId].anexo_id;
+  if(prevId){
+    fetch(SHEETS_URL,{method:'POST',mode:'no-cors',redirect:'follow',
+      body:JSON.stringify({action:'deleteAttachment',id:prevId})}).catch(function(){});
+  }
 
   // Show loading indicator
   var attachArea=document.querySelector('.attach-area');
