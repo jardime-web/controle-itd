@@ -520,9 +520,116 @@ function loadDB() {
 }
 
 function saveDB(){
-  try{ localStorage.setItem(DB_KEY,JSON.stringify(db)); }catch(e){}
+  try{ localStorage.setItem(DB_KEY,JSON.stringify(db)); }
+  catch(e){
+    console.log('localStorage cheio:', e);
+    if(!window._quotaWarned){
+      window._quotaWarned=true;
+      alert('Atenção: o armazenamento do navegador encheu (anexos grandes). O progresso continua sendo salvo na planilha, mas os anexos podem não persistir neste navegador. Prefira PDFs menores.');
+    }
+  }
   clearTimeout(_syncTimeout);
   _syncTimeout = setTimeout(syncToSheets, 500);
+}
+
+// Anexos (base64) são grandes demais para a célula da planilha (limite de 50 mil caracteres).
+// Eles ficam apenas no navegador; para a planilha vai tudo MENOS os anexos.
+function stripAttachments(obj){
+  return JSON.parse(JSON.stringify(obj, function(k,v){
+    if(k==='anexo'||k==='anexo_pages') return undefined;
+    return v;
+  }));
+}
+
+// Ao carregar da planilha (que não tem anexos), recoloca os anexos guardados localmente.
+function graftLocalAttachments(remote){
+  try{
+    if(!db||!db.years||!remote||!remote.years) return;
+    Object.keys(db.years).forEach(function(y){
+      var months=(db.years[y]&&db.years[y].months)||{};
+      Object.keys(months).forEach(function(m){
+        var sups=(months[m]&&months[m].suppliers)||{};
+        Object.keys(sups).forEach(function(c){
+          var sd=sups[c].stepData||{};
+          Object.keys(sd).forEach(function(st){
+            var loc=sd[st];
+            if(loc&&(loc.anexo||loc.anexo_pages)){
+              var ry=remote.years[y];
+              var rm=ry&&ry.months&&ry.months[m];
+              var rs=rm&&rm.suppliers&&rm.suppliers[c];
+              if(rs){
+                if(!rs.stepData) rs.stepData={};
+                if(!rs.stepData[st]) rs.stepData[st]={};
+                if(loc.anexo) rs.stepData[st].anexo=loc.anexo;
+                if(loc.anexo_pages) rs.stepData[st].anexo_pages=loc.anexo_pages;
+                if(loc.anexo_name&&!rs.stepData[st].anexo_name) rs.stepData[st].anexo_name=loc.anexo_name;
+              }
+            }
+          });
+        });
+      });
+    });
+  }catch(e){ console.log('Erro ao restaurar anexos locais:', e); }
+}
+
+// ==== ANEXOS COMPARTILHADOS (aba "anexos" da planilha, em pedaços de 45k) ====
+function makeAnexoId(stepId){
+  return (nav.sup||'x').replace(/\D/g,'')+'-'+stepId+'-'+Date.now();
+}
+
+function uploadAttachment(id,name,dataB64){
+  showSyncStatus('Enviando anexo...', 'saving');
+  fetch(SHEETS_URL,{
+    method:'POST',mode:'no-cors',redirect:'follow',
+    body:JSON.stringify({action:'saveAttachment',id:id,name:name,data:dataB64})
+  }).then(function(){
+    showSyncStatus('Anexo enviado ✓','ok');
+    setTimeout(function(){showSyncStatus('','');},3000);
+  }).catch(function(e){
+    console.log('Erro ao enviar anexo:',e);
+    showSyncStatus('Erro ao enviar anexo','err');
+  });
+}
+
+function fetchAttachment(id,cb){
+  showSyncStatus('Baixando anexo...','saving');
+  fetch(SHEETS_URL+'?action=getAttachment&id='+encodeURIComponent(id)+'&v='+Date.now(),{cache:'no-store'})
+  .then(function(r){return r.json();})
+  .then(function(resp){
+    showSyncStatus('','');
+    if(resp&&resp.ok){ cb(resp.data,resp.name); }
+    else { alert('Anexo não encontrado na planilha. Reanexe o arquivo.'); cb(null); }
+  }).catch(function(e){
+    showSyncStatus('','');
+    alert('Erro ao baixar o anexo: '+e.message);
+    cb(null);
+  });
+}
+
+function regenPages(dataB64,name,cb){
+  if(!(name||'').toLowerCase().endsWith('.pdf')){ cb([dataB64]); return; }
+  try{
+    var bin=atob(dataB64.split(',')[1]);
+    var arr=new Uint8Array(bin.length);
+    for(var i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+  }catch(e){ alert('Anexo corrompido. Reanexe o arquivo.'); cb(null); return; }
+  pdfjsLib.getDocument({data:arr}).promise.then(function(pdf){
+    var pages=[],promises=[];
+    for(var p=1;p<=pdf.numPages;p++){
+      promises.push((function(pn){return pdf.getPage(pn).then(function(page){
+        var viewport=page.getViewport({scale:1.5});
+        var canvas=document.createElement('canvas');
+        canvas.width=viewport.width;canvas.height=viewport.height;
+        return page.render({canvasContext:canvas.getContext('2d'),viewport:viewport}).promise.then(function(){
+          pages[pn-1]=canvas.toDataURL('image/jpeg',0.85);
+        });
+      });})(p));
+    }
+    Promise.all(promises).then(function(){cb(pages);});
+  }).catch(function(err){
+    alert('Erro ao processar o PDF: '+err.message);
+    cb(null);
+  });
 }
 
 function syncToSheets(){
@@ -534,7 +641,7 @@ function syncToSheets(){
     method:'POST',
     mode:'no-cors',
     redirect:'follow',
-    body: JSON.stringify(db)
+    body: JSON.stringify(stripAttachments(db))
   }).then(function(){
     // Em modo no-cors não dá pra ler a resposta do POST,
     // então confirmamos relendo os dados via GET:
@@ -564,8 +671,9 @@ function loadFromSheets(callback){
   .then(function(r){ return r.json(); })
   .then(function(data){
     if(data && data.years){
+      graftLocalAttachments(data);
       db = data;
-      localStorage.setItem(DB_KEY, JSON.stringify(db));
+      try{ localStorage.setItem(DB_KEY, JSON.stringify(db)); }catch(e){ console.log('localStorage cheio:', e); }
     }
     showSyncStatus('Sincronizado ✓', 'ok');
     setTimeout(function(){ showSyncStatus('',''); }, 2000);
@@ -1315,7 +1423,7 @@ function renderStep(s,status,obs,stepData,cnpj){
   // Get conclusion date
   var sup=cnpj?getMonth(nav.year,nav.month).suppliers[cnpj]:null;
   var doneDate=sup&&sup.stepDates&&sup.stepDates[s.id]?sup.stepDates[s.id]:'';
-  return '<div class="step-card '+st+'" id="sc-'+s.id+'">'+
+  return '<div class="step-card '+st+(!s.auto&&_openSteps[s.id]?' open':'')+'" id="sc-'+s.id+'">'+
     '<div class="step-hdr" onclick="togStep('+s.id+')" '+(s.auto?'style="cursor:default"':'')+'>'+
     '<div class="step-num '+st+'">'+String(s.id).padStart(2,'0')+'</div>'+
     '<div class="step-info">'+
@@ -1387,11 +1495,13 @@ function renderStepFields(s,status,stepData,obs,cnpj){
   return html;
 }
 
+var _openSteps = {};
 function togStep(id){
   var card=document.getElementById('sc-'+id);
   var s=STEPS.find(function(x){return x.id===id;});
   if(s&&s.auto) return;
   card.classList.toggle('open');
+  _openSteps[id]=card.classList.contains('open');
 }
 
 function saveStepDate(stepId,key,val){
@@ -1465,9 +1575,12 @@ function handleAnexo(event,stepId){
 
     if(!isPDF){
       // Image — save directly
+      var idImg=makeAnexoId(stepId);
       sup.stepData[stepId].anexo=data;
       sup.stepData[stepId].anexo_name=file.name;
-      sup.stepData[stepId].anexo_pages=null;
+      sup.stepData[stepId].anexo_pages=[data];
+      sup.stepData[stepId].anexo_id=idImg;
+      uploadAttachment(idImg,file.name,data);
       sup.history.push({msg:'Etapa '+String(stepId).padStart(2,'0')+' — Anexo adicionado: '+file.name,time:nowStr(),type:'update'});
       saveDB();renderFlow();
       return;
@@ -1475,10 +1588,22 @@ function handleAnexo(event,stepId){
 
     // PDF — convert each page to image using PDF.js
     var arrayBuffer=e.target.result;
-    // Also store as base64 for download
+    var b64data=null, pagesData=null;
+    var idPdf=makeAnexoId(stepId);
+    function finishPDF(){
+      if(b64data===null||pagesData===null) return;
+      sup.stepData[stepId].anexo=b64data; // base64 correto para download
+      sup.stepData[stepId].anexo_name=file.name;
+      sup.stepData[stepId].anexo_pages=pagesData;
+      sup.stepData[stepId].anexo_id=idPdf;
+      uploadAttachment(idPdf,file.name,b64data);
+      sup.history.push({msg:'Etapa '+String(stepId).padStart(2,'0')+' — PDF anexado: '+file.name+' ('+pagesData.length+' página(s))',time:nowStr(),type:'update'});
+      saveDB();renderFlow();
+    }
     var base64Reader=new FileReader();
     base64Reader.onload=function(b64e){
-      sup.stepData[stepId].anexo=b64e.target.result; // base64 for download
+      b64data=b64e.target.result;
+      finishPDF();
     };
     base64Reader.readAsDataURL(file);
 
@@ -1504,11 +1629,8 @@ function handleAnexo(event,stepId){
       }
 
       Promise.all(promises).then(function(){
-        sup.stepData[stepId].anexo=data; // keep original base64
-        sup.stepData[stepId].anexo_name=file.name;
-        sup.stepData[stepId].anexo_pages=pages; // array of page images
-        sup.history.push({msg:'Etapa '+String(stepId).padStart(2,'0')+' — PDF anexado: '+file.name+' ('+numPages+' página(s))',time:nowStr(),type:'update'});
-        saveDB();renderFlow();
+        pagesData=pages;
+        finishPDF();
       });
     }).catch(function(err){
       alert('Erro ao processar o PDF: '+err.message);
@@ -1621,15 +1743,40 @@ function downloadAnexo(stepId, cnpj){
     alert('Arquivo não encontrado. Tente reanexar o PDF.');return;
   }
   var sd = sup.stepData[stepId];
-  var pages = sd.anexo_pages;
-  var name = sd.anexo_name||'anexo';
 
-  if(!pages||!pages.length){
-    alert('Páginas não encontradas. Reanexe o PDF para gerar a prévia.');return;
+  // 1) Prévia já pronta neste navegador
+  if(sd.anexo_pages&&sd.anexo_pages.length){ openAnexoPreview(sd.anexo_pages,sup); return; }
+
+  // 2) Arquivo local sem prévia — regenerar páginas
+  if(sd.anexo&&sd.anexo_name){
+    regenPages(sd.anexo,sd.anexo_name,function(pages){
+      if(!pages) return;
+      sd.anexo_pages=pages;saveDB();
+      openAnexoPreview(pages,sup);
+    });
+    return;
   }
 
-  var nf = getMonth(nav.year,nav.month).nfs.find(function(n){return n.cnpj===supCnpj;});
+  // 3) Arquivo não está neste computador — buscar na planilha
+  if(sd.anexo_id){
+    fetchAttachment(sd.anexo_id,function(data,name){
+      if(!data) return;
+      sd.anexo=data;
+      if(name&&!sd.anexo_name) sd.anexo_name=name;
+      regenPages(data,sd.anexo_name||name||'anexo.pdf',function(pages){
+        if(!pages) return;
+        sd.anexo_pages=pages;saveDB();
+        openAnexoPreview(pages,sup);
+      });
+    });
+    return;
+  }
 
+  alert('Arquivo não encontrado. Tente reanexar o PDF.');
+}
+
+function openAnexoPreview(pages,sup){
+  var name = sup&&sup.nome?sup.nome:'';
   var pagesHtml = pages.map(function(pg,idx){
     return '<div style="margin-bottom:20px;page-break-after:'+(idx<pages.length-1?'always':'auto')+'">'+
       '<img src="'+pg+'" style="width:100%;display:block">'+
@@ -1637,7 +1784,7 @@ function downloadAnexo(stepId, cnpj){
   }).join('');
 
   var html = '<!DOCTYPE html><html><head><meta charset="UTF-8">'+
-    '<title>Recibo Digital — '+sup.nome+'</title>'+
+    '<title>Recibo Digital — '+name+'</title>'+
     '<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#fff}'+
     '@media print{@page{margin:0}.no-print{display:none}}'+
     '.no-print{position:fixed;bottom:16px;right:16px;z-index:99}'+
@@ -1657,7 +1804,17 @@ function downloadAnexo(stepId, cnpj){
 
 function removeAnexo(stepId){
   var sup=getMonth(nav.year,nav.month).suppliers[nav.sup];
-  if(sup.stepData&&sup.stepData[stepId]){delete sup.stepData[stepId].anexo;delete sup.stepData[stepId].anexo_name;}
+  if(sup.stepData&&sup.stepData[stepId]){
+    var idRm=sup.stepData[stepId].anexo_id;
+    delete sup.stepData[stepId].anexo;
+    delete sup.stepData[stepId].anexo_name;
+    delete sup.stepData[stepId].anexo_pages;
+    delete sup.stepData[stepId].anexo_id;
+    if(idRm){
+      fetch(SHEETS_URL,{method:'POST',mode:'no-cors',redirect:'follow',
+        body:JSON.stringify({action:'deleteAttachment',id:idRm})}).catch(function(){});
+    }
+  }
   saveDB();renderFlow();
 }
 
