@@ -345,6 +345,30 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
   </div>
 </div>
 
+<!-- MODAL CADASTRO DE FORNECEDORES (Admin) -->
+<div class="overlay" id="ov-fornecedores">
+  <div class="modal" style="max-width:560px">
+    <h3 style="margin-bottom:6px"><i class="ti ti-address-book"></i> Cadastro de Fornecedores</h3>
+    <p style="font-size:12px;color:var(--text-2);margin-bottom:14px">Nomes sugeridos automaticamente ao digitar o CNPJ. Corrija ou exclua entradas erradas — a exclusão remove apenas a sugestão, não afeta notas já lançadas.</p>
+    <div id="forn-list" style="max-height:340px;overflow-y:auto;border:1px solid var(--border-md);border-radius:var(--radius)"></div>
+    <div class="modal-btns" style="margin-top:14px">
+      <button class="btn" onclick="closeOv('ov-fornecedores')">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL EDITAR ETAPAS (Admin) -->
+<div class="overlay" id="ov-etapas">
+  <div class="modal" style="max-width:600px">
+    <h3 style="margin-bottom:6px"><i class="ti ti-list-numbers"></i> Etapas e Campos</h3>
+    <p style="font-size:12px;color:var(--text-2);margin-bottom:14px">Personalize os nomes das etapas e os rótulos dos campos internos. As mudanças valem para todos os computadores e aparecem automaticamente na tela, no histórico, no Excel exportado e no PDF do processo. O ícone ↩ restaura o nome original.</p>
+    <div id="etapas-list" style="max-height:360px;overflow-y:auto;border:1px solid var(--border-md);border-radius:var(--radius)"></div>
+    <div class="modal-btns" style="margin-top:14px">
+      <button class="btn" onclick="closeOv('ov-etapas')">Fechar</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL FECHAR MÊS -->
 <div class="overlay" id="ov-close">
   <div class="modal">
@@ -490,6 +514,21 @@ var S = {
   done:     {label:'Concluído',    icon:'ti-check',           cls:'badge-done'},
   alert:    {label:'Atenção',      icon:'ti-alert-triangle',  cls:'badge-alert'},
 };
+
+// Título da etapa: usa o nome personalizado pelo admin (db.stepNames) ou o padrão
+function stepTitle(id){
+  if(db&&db.stepNames&&db.stepNames[id]) return db.stepNames[id];
+  var s=STEPS.find(function(x){return x.id===id;});
+  return s?s.title:'';
+}
+
+// Rótulo do campo: usa o nome personalizado pelo admin (db.fieldNames) ou o padrão
+function fieldLabel(stepId,key){
+  if(db&&db.fieldNames&&db.fieldNames[stepId]&&db.fieldNames[stepId][key]) return db.fieldNames[stepId][key];
+  var s=STEPS.find(function(x){return x.id===stepId;});
+  var f=s&&s.fields&&s.fields.find(function(x){return x.key===key;});
+  return f?f.label:key;
+}
 
 var db  = loadDB();
 var nav = {page:'months', year:CUR_YEAR, month:null, sup:null};
@@ -807,8 +846,133 @@ function renderHdr(){
   var hasOtherYears=Object.keys(db.years).length>1;
   document.getElementById('hdr-right').innerHTML=
     '<button class="btn-admin'+(_adminMode?' active':'')+'" onclick="toggleAdmin()" title="'+(_adminMode?'Sair do modo administrador':'Entrar como administrador')+'">'+'<i class="ti ti-shield'+ (_adminMode?'-check':'')+'" style="font-size:13px"></i> '+(_adminMode?'Admin ativo':'Admin')+'</button>'+
+    (_adminMode?'<button class="btn btn-sm" onclick="openFornecedores()"><i class="ti ti-address-book"></i> Fornecedores</button>':'')+
+    (_adminMode?'<button class="btn btn-sm" onclick="openEtapas()"><i class="ti ti-list-numbers"></i> Etapas</button>':'')+
     (hasOtherYears?'<button class="btn btn-sm" onclick="go(\'years\')"><i class="ti ti-calendar"></i> Anos anteriores</button>':'')+
     '<button class="btn btn-sm" onclick="openExport()"><i class="ti ti-download"></i> Exportar</button>';
+}
+
+// ==== CADASTRO DE FORNECEDORES (Admin) ====
+function openFornecedores(){
+  if(!_adminMode) return;
+  renderFornList();
+  openOv('ov-fornecedores');
+}
+
+function renderFornList(){
+  var box=document.getElementById('forn-list');
+  var sups=db.suppliers||{};
+  var keys=Object.keys(sups).sort(function(a,b){
+    return (sups[a].nome||'').localeCompare(sups[b].nome||'');
+  });
+  if(!keys.length){
+    box.innerHTML='<div style="padding:24px;text-align:center;font-size:13px;color:var(--text-2)">Nenhum fornecedor memorizado ainda. O cadastro é preenchido automaticamente conforme as notas são lançadas.</div>';
+    return;
+  }
+  box.innerHTML=keys.map(function(raw){
+    var s=sups[raw];
+    return '<div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border-sm,#eee)">'+
+      '<div style="flex-shrink:0;font-size:12px;color:var(--text-2);font-family:monospace;width:135px">'+(s.cnpj||maskCNPJ(raw))+'</div>'+
+      '<input id="forn-'+raw+'" value="'+(s.nome||'').replace(/"/g,'&quot;')+'" style="flex:1;padding:6px 8px;font-size:13px;border:1px solid var(--border-md);border-radius:6px;font-family:inherit;outline:none">'+
+      '<i class="ti ti-check" style="color:var(--green,#16a34a);cursor:pointer;font-size:16px;flex-shrink:0" title="Salvar nome" onclick="saveFornecedor(\''+raw+'\')"></i>'+
+      '<i class="ti ti-trash" style="color:var(--red,#dc2626);cursor:pointer;font-size:15px;flex-shrink:0" title="Excluir do cadastro" onclick="deleteFornecedor(\''+raw+'\')"></i>'+
+    '</div>';
+  }).join('');
+}
+
+function saveFornecedor(raw){
+  var el=document.getElementById('forn-'+raw);
+  var nome=(el&&el.value||'').trim();
+  if(!nome){alert('O nome não pode ficar vazio.');return;}
+  db.suppliers[raw].nome=nome;
+  saveDB();
+  renderFornList();
+  showSyncStatus('Fornecedor atualizado ✓','ok');
+  setTimeout(function(){showSyncStatus('','');},2500);
+}
+
+function deleteFornecedor(raw){
+  var s=db.suppliers[raw]||{};
+  if(!confirm('Excluir "'+(s.nome||raw)+'" do cadastro de sugestões?\n\nAs notas já lançadas não são afetadas — apenas a sugestão automática de nome deixa de existir para este CNPJ.')) return;
+  delete db.suppliers[raw];
+  saveDB();
+  renderFornList();
+}
+
+// ==== NOMES DAS ETAPAS (Admin) ====
+function openEtapas(){
+  if(!_adminMode) return;
+  renderEtapasList();
+  openOv('ov-etapas');
+}
+
+function renderEtapasList(){
+  var box=document.getElementById('etapas-list');
+  box.innerHTML=STEPS.map(function(s){
+    var custom=db.stepNames&&db.stepNames[s.id];
+    var head='<div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border-sm,#eee);background:var(--bg-2,#f8f9fb)">'+
+      '<div style="flex-shrink:0;width:26px;height:26px;border-radius:50%;background:var(--blue,#2563EB);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">'+String(s.id).padStart(2,'0')+'</div>'+
+      '<input id="etapa-'+s.id+'" value="'+stepTitle(s.id).replace(/"/g,'&quot;')+'" style="flex:1;padding:6px 8px;font-size:13px;font-weight:600;border:1px solid var(--border-md);border-radius:6px;font-family:inherit;outline:none'+(custom?';border-color:var(--blue,#2563EB)':'')+'">'+
+      '<i class="ti ti-check" style="color:var(--green,#16a34a);cursor:pointer;font-size:16px;flex-shrink:0" title="Salvar nome" onclick="saveEtapaNome('+s.id+')"></i>'+
+      (custom?'<i class="ti ti-arrow-back-up" style="color:var(--text-2,#888);cursor:pointer;font-size:15px;flex-shrink:0" title="Restaurar nome original: '+s.title.replace(/"/g,'&quot;')+'" onclick="resetEtapaNome('+s.id+')"></i>':'<span style="width:15px;flex-shrink:0"></span>')+
+    '</div>';
+    var fieldsHtml=(s.fields||[]).map(function(f){
+      var customF=db.fieldNames&&db.fieldNames[s.id]&&db.fieldNames[s.id][f.key];
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 12px 6px 46px;border-bottom:1px solid var(--border-sm,#eee)">'+
+        '<i class="ti ti-corner-down-right" style="color:var(--text-3,#bbb);font-size:13px;flex-shrink:0"></i>'+
+        '<input id="campo-'+s.id+'-'+f.key+'" value="'+fieldLabel(s.id,f.key).replace(/"/g,'&quot;')+'" style="flex:1;padding:5px 8px;font-size:12.5px;border:1px solid var(--border-md);border-radius:6px;font-family:inherit;outline:none'+(customF?';border-color:var(--blue,#2563EB)':'')+'">'+
+        '<i class="ti ti-check" style="color:var(--green,#16a34a);cursor:pointer;font-size:15px;flex-shrink:0" title="Salvar rótulo" onclick="saveCampoNome('+s.id+',\''+f.key+'\')"></i>'+
+        (customF?'<i class="ti ti-arrow-back-up" style="color:var(--text-2,#888);cursor:pointer;font-size:14px;flex-shrink:0" title="Restaurar rótulo original: '+f.label.replace(/"/g,'&quot;')+'" onclick="resetCampoNome('+s.id+',\''+f.key+'\')"></i>':'<span style="width:14px;flex-shrink:0"></span>')+
+      '</div>';
+    }).join('');
+    return head+fieldsHtml;
+  }).join('');
+}
+
+function saveCampoNome(stepId,key){
+  var el=document.getElementById('campo-'+stepId+'-'+key);
+  var nome=(el&&el.value||'').trim();
+  if(!nome){alert('O rótulo do campo não pode ficar vazio.');return;}
+  var s=STEPS.find(function(x){return x.id===stepId;});
+  var f=s&&s.fields.find(function(x){return x.key===key;});
+  if(!db.fieldNames) db.fieldNames={};
+  if(!db.fieldNames[stepId]) db.fieldNames[stepId]={};
+  if(f&&nome===f.label){ delete db.fieldNames[stepId][key]; }
+  else { db.fieldNames[stepId][key]=nome; }
+  saveDB();
+  renderEtapasList();
+  render();
+  showSyncStatus('Rótulo do campo atualizado ✓','ok');
+  setTimeout(function(){showSyncStatus('','');},2500);
+}
+
+function resetCampoNome(stepId,key){
+  if(db.fieldNames&&db.fieldNames[stepId]) delete db.fieldNames[stepId][key];
+  saveDB();
+  renderEtapasList();
+  render();
+}
+
+function saveEtapaNome(id){
+  var el=document.getElementById('etapa-'+id);
+  var nome=(el&&el.value||'').trim();
+  if(!nome){alert('O nome da etapa não pode ficar vazio.');return;}
+  var s=STEPS.find(function(x){return x.id===id;});
+  if(!db.stepNames) db.stepNames={};
+  if(s&&nome===s.title){ delete db.stepNames[id]; } // igual ao original = sem personalização
+  else { db.stepNames[id]=nome; }
+  saveDB();
+  renderEtapasList();
+  renderHdr();render();
+  showSyncStatus('Nome da etapa atualizado ✓','ok');
+  setTimeout(function(){showSyncStatus('','');},2500);
+}
+
+function resetEtapaNome(id){
+  if(db.stepNames) delete db.stepNames[id];
+  saveDB();
+  renderEtapasList();
+  renderHdr();render();
 }
 
 function openExport(){
@@ -882,12 +1046,12 @@ function doExport(){
 
   var cols=['Mês','Ano','Nº Nota','Chave NF-e','CNPJ','Fornecedor','Data Emissão','Valor (R$)',
     'Status Geral',
-    'Nº Recibo','Nº Chamado','Valor ITD','Concluído Etapa 02',
-    'Obs Escrituração','Concluído Etapa 03',
-    'Data Declaração','Nº Declaração','Nº Guia ITD','Concluído Etapa 04',
-    'Obs Retorno SEFAZ','Concluído Etapa 05',
-    'Data Recolhimento','RC','OC','Concluído Etapa 06',
-    'Data Pagamento','Valor Pago','Concluído Etapa 07'
+    fieldLabel(2,'numRecibo'),fieldLabel(2,'numChamado'),fieldLabel(2,'valorITD'),'Concluído: '+stepTitle(2),
+    fieldLabel(3,'obs')+' — '+stepTitle(3),'Concluído: '+stepTitle(3),
+    fieldLabel(4,'dtDeclaracao'),fieldLabel(4,'numDeclaracao'),fieldLabel(4,'numGuiaITD'),'Concluído: '+stepTitle(4),
+    fieldLabel(5,'obs')+' — '+stepTitle(5),'Concluído: '+stepTitle(5),
+    fieldLabel(6,'dtRecolhimento'),fieldLabel(6,'rc'),fieldLabel(6,'oc'),'Concluído: '+stepTitle(6),
+    fieldLabel(7,'dtPagamento'),fieldLabel(7,'valorPago'),'Concluído: '+stepTitle(7)
   ];
 
   var rows=nfs.map(function(n){
@@ -901,15 +1065,30 @@ function doExport(){
     function fld(id,key){ return sd[id]&&sd[id][key]?sd[id][key]:''; }
     var status=!sup?'Sem fluxo':isFlowComplete(st)?'Concluído':'Pendente';
 
-    return [n.mes,n.ano,n.nnota||'',n.chave,n.cnpj,n.nome,n.emissao||'',n.valor,
-      status,
-      fld(2,'numRecibo'),fld(2,'numChamado'),fld(2,'valorITD'),dates[2]||stepDone(2),
-      fld(3,'obs'),dates[3]||stepDone(3),
-      fld(4,'dtDeclaracao'),fld(4,'numDeclaracao'),fld(4,'numGuiaITD'),dates[4]||stepDone(4),
-      fld(5,'obs'),dates[5]||stepDone(5),
-      fld(6,'dtRecolhimento'),fld(6,'rc'),fld(6,'oc'),dates[6]||stepDone(6),
-      fld(7,'dtPagamento'),fld(7,'valorPago'),dates[7]||stepDone(7)
-    ].map(function(v){ return '"'+(v+'').replace(/"/g,'""')+'"'; }).join(';');
+    function q(v){ return '"'+(v+'').replace(/"/g,'""')+'"'; }
+    // ="..." força o Excel a tratar como TEXTO (chave de 44 dígitos não vira notação científica;
+    // números com zeros à esquerda ficam intactos)
+    function qtxt(v){ return v?'="'+(v+'').replace(/"/g,'""')+'"':'""'; }
+    // Valores monetários com vírgula decimal (padrão brasileiro do Excel)
+    function qval(v){
+      if(v===''||v==null) return '""';
+      var s=(v+'').trim();
+      var num;
+      if(s.indexOf(',')>-1){ num=parseFloat(s.replace(/\./g,'').replace(',','.')); } // 1.234,56 → 1234.56
+      else { num=parseFloat(s); } // 50.5 ou 6330
+      if(isNaN(num)) return q(v);
+      return '"'+num.toFixed(2).replace('.',',')+'"';
+    }
+
+    return [q(n.mes),q(n.ano),qtxt(n.nnota),qtxt(n.chave),q(n.cnpj),q(n.nome),q(n.emissao||''),qval(n.valor),
+      q(status),
+      qtxt(fld(2,'numRecibo')),qtxt(fld(2,'numChamado')),qval(fld(2,'valorITD')),q(dates[2]||stepDone(2)),
+      q(fld(3,'obs')),q(dates[3]||stepDone(3)),
+      q(fld(4,'dtDeclaracao')),qtxt(fld(4,'numDeclaracao')),qtxt(fld(4,'numGuiaITD')),q(dates[4]||stepDone(4)),
+      q(fld(5,'obs')),q(dates[5]||stepDone(5)),
+      q(fld(6,'dtRecolhimento')),q(fld(6,'rc')),q(fld(6,'oc')),q(dates[6]||stepDone(6)),
+      q(fld(7,'dtPagamento')),qval(fld(7,'valorPago')),q(dates[7]||stepDone(7))
+    ].join(';');
   });
 
   var csv='\uFEFF'+cols.map(function(c){return '"'+c+'"';}).join(';')+'\n'+rows.join('\n');
@@ -1163,7 +1342,7 @@ function renderNFTable(md,locked){
                 var icon=st==='alert'?'ti-alert-triangle':st==='progress'?'ti-player-play':'ti-clock';
                 return '<div style="font-size:10px;color:'+color+';display:flex;align-items:center;gap:3px;font-weight:500">'+
                   '<i class="ti '+icon+'" style="font-size:10px"></i> '+
-                  String(blocking.id).padStart(2,'0')+' '+blocking.title+'</div>';
+                  String(blocking.id).padStart(2,'0')+' '+stepTitle(blocking.id)+'</div>';
               })()+
             '</div></div>'+
           '</div>'+
@@ -1190,9 +1369,29 @@ function onChaveInput(v){
   var fb=document.getElementById('chave-feedback');
   if(!v.length){fb.innerHTML='';return;}
   if(v.length===44){
-    fb.innerHTML='<i class="ti ti-circle-check chave-ok"></i><span class="chave-ok">44 dígitos ✓</span>';
+    // Posições fixas da chave NF-e: [1-2]=UF, [3-4]=ano, [5-6]=mês, [7-20]=CNPJ, [26-34]=nº da nota
     document.getElementById('f-cnpj').value=maskCNPJ(v.substring(6,20));
     onCnpjInput(document.getElementById('f-cnpj').value);
+
+    // Nº da nota: 9 dígitos (posições 26 a 34), sem zeros à esquerda
+    var nnotaChave=String(parseInt(v.substring(25,34),10));
+    var nnotaEl=document.getElementById('f-nnota');
+    if(nnotaEl&&nnotaChave!=='NaN') nnotaEl.value=nnotaChave;
+
+    // Ano e mês de emissão (posições 3-4 e 5-6) — trava o calendário no mês da chave;
+    // o analista escolhe o dia ativamente (sem dia pré-preenchido, para não induzir erro)
+    var anoChave=2000+parseInt(v.substring(2,4),10);
+    var mesChave=parseInt(v.substring(4,6),10);
+    var emissaoEl=document.getElementById('f-emissao');
+    var extras='';
+    if(emissaoEl&&mesChave>=1&&mesChave<=12){
+      var mm=String(mesChave).padStart(2,'0');
+      var lastDay=new Date(anoChave,mesChave,0).getDate();
+      emissaoEl.min=anoChave+'-'+mm+'-01';
+      emissaoEl.max=anoChave+'-'+mm+'-'+String(lastDay).padStart(2,'0');
+      extras=' — emissão em <b>'+mm+'/'+anoChave+'</b>, selecione o dia';
+    }
+    fb.innerHTML='<i class="ti ti-circle-check chave-ok"></i><span class="chave-ok">44 dígitos ✓ — CNPJ e nº da nota preenchidos'+extras+'</span>';
   } else {
     fb.innerHTML='<span class="chave-cnt">'+v.length+' / 44</span>';
     if(v.length<20) document.getElementById('f-cnpj').value='';
@@ -1210,7 +1409,12 @@ function onCnpjInput(v){
   var el=document.getElementById('f-cnpj');if(el) el.value=v;
   var raw=v.replace(/[^0-9]/g,'');
   if(raw.length===14&&db.suppliers&&db.suppliers[raw]){
-    var nomeEl=document.getElementById('f-nome');if(nomeEl&&!nomeEl.value) nomeEl.value=db.suppliers[raw].nome;
+    var nomeEl=document.getElementById('f-nome');
+    if(nomeEl&&!nomeEl.value){
+      nomeEl.value=db.suppliers[raw].nome;
+      var eNome=document.getElementById('e-nome');
+      if(eNome) eNome.innerHTML='<span style="color:#2563EB;font-weight:500">Nome sugerido do cadastro — confira antes de adicionar</span>';
+    }
   }
 }
 
@@ -1229,6 +1433,15 @@ function addNF(){
   if(!nome){document.getElementById('e-nome').textContent='Informe o nome';ok=false;}
   if(!nnota){document.getElementById('e-nnota').textContent='Informe o nº da nota';ok=false;}
   if(!emissao){document.getElementById('e-emissao').textContent='Informe a data de emissão';ok=false;}
+  else if(chave.length===44){
+    // A data precisa bater com o mês/ano embutidos na chave
+    var anoC=2000+parseInt(chave.substring(2,4),10);
+    var mesC=parseInt(chave.substring(4,6),10);
+    var pe=emissao.split('-');
+    if(mesC>=1&&mesC<=12&&(parseInt(pe[0],10)!==anoC||parseInt(pe[1],10)!==mesC)){
+      document.getElementById('e-emissao').textContent='Data não confere com a chave (emissão em '+String(mesC).padStart(2,'0')+'/'+anoC+')';ok=false;
+    }
+  }
   if(!valor||valor<=0){document.getElementById('e-val').textContent='Valor inválido';ok=false;}
   if(!ok) return;
 
@@ -1427,7 +1640,7 @@ function renderStep(s,status,obs,stepData,cnpj){
     '<div class="step-hdr" onclick="togStep('+s.id+')" '+(s.auto?'style="cursor:default"':'')+'>'+
     '<div class="step-num '+st+'">'+String(s.id).padStart(2,'0')+'</div>'+
     '<div class="step-info">'+
-      '<div class="step-ttl '+st+'">'+s.title+(isAuto?' <span style="font-size:10px;font-weight:400;opacity:.7">(automática)</span>':'')+'</div>'+
+      '<div class="step-ttl '+st+'">'+stepTitle(s.id)+(isAuto?' <span style="font-size:10px;font-weight:400;opacity:.7">(automática)</span>':'')+'</div>'+
       (obs?'<div class="step-obs"><i class="ti ti-message-2"></i> '+obs+'</div>':'')+
       ((st==='done'||st==='auto-done')&&doneDate?'<div style="font-size:10px;color:var(--green);margin-top:2px"><i class="ti ti-check"></i> Concluído em '+doneDate+'</div>':'')+
     '</div>'+
@@ -1449,7 +1662,7 @@ function renderStepFields(s,status,stepData,obs,cnpj){
   s.fields.forEach(function(f){
     if(f.key==='obs') return; // handle obs separately at bottom
     if(f.type==='file'){
-      html+='<div class="step-field"><div class="flbl">'+f.label+'</div>';
+      html+='<div class="step-field"><div class="flbl">'+fieldLabel(s.id,f.key)+'</div>';
       if(sd.anexo_name){
         html+='<div class="attach-file">'+
           '<i class="ti ti-paperclip" style="color:var(--blue);flex-shrink:0"></i>'+
@@ -1469,11 +1682,11 @@ function renderStepFields(s,status,stepData,obs,cnpj){
         var dp=storedDate.split('/');
         if(dp.length===3) inputDate=dp[2]+'-'+dp[1]+'-'+dp[0];
       }
-      html+='<div class="step-field"><div class="flbl">'+f.label+'</div>'+
+      html+='<div class="step-field"><div class="flbl">'+fieldLabel(s.id,f.key)+'</div>'+
         '<input class="sfinput" id="sf-'+s.id+'-'+f.key+'" type="date" value="'+inputDate+'" onblur="saveStepDate('+s.id+',\''+f.key+'\',this.value)">'+
         '</div>';
     } else {
-      html+='<div class="step-field"><div class="flbl">'+f.label+'</div>'+
+      html+='<div class="step-field"><div class="flbl">'+fieldLabel(s.id,f.key)+'</div>'+
         '<input class="sfinput" id="sf-'+s.id+'-'+f.key+'" type="'+(f.type||'text')+'" value="'+(sd[f.key]||'')+'" placeholder="'+(f.placeholder||'')+'" onblur="saveStepField('+s.id+',\''+f.key+'\',this.value)">'+
         '</div>';
     }
@@ -1552,7 +1765,7 @@ function saveStepAll(stepId){
   });
   var obsEl=document.getElementById('sf-'+stepId+'-obs');
   if(obsEl){sup.stepObs[stepId]=obsEl.value;if(!sup.stepData[stepId])sup.stepData[stepId]={};sup.stepData[stepId].obs=obsEl.value;}
-  if(old!==status) sup.history.push({msg:'Etapa '+String(stepId).padStart(2,'0')+' — '+s.title+': '+S[old].label+' → '+S[status].label,time:nowStr(),type:status==='done'?'done':status==='alert'?'alert':'update'});
+  if(old!==status) sup.history.push({msg:'Etapa '+String(stepId).padStart(2,'0')+' — '+stepTitle(stepId)+': '+S[old].label+' → '+S[status].label,time:nowStr(),type:status==='done'?'done':status==='alert'?'alert':'update'});
   // Etapa concluída fecha sozinha; demais status mantêm aberta
   if(status==='done') _openSteps[stepId]=false;
   saveDB();renderFlow();
@@ -1660,6 +1873,39 @@ var styleEl=document.createElement('style');
 styleEl.textContent='@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}';
 document.head.appendChild(styleEl);
 function exportPDF(cnpj){
+  var md0 = getMonth(nav.year, nav.month);
+  var sup0 = md0.suppliers[cnpj];
+  if(!sup0) return;
+  var sd2 = sup0.stepData && sup0.stepData[2];
+
+  // Anexo existe mas não está neste navegador? Buscar na planilha antes de montar o PDF
+  if(sd2 && sd2.anexo_id && !(sd2.anexo_pages && sd2.anexo_pages.length)){
+    if(sd2.anexo && sd2.anexo_name){
+      // Arquivo local sem prévia — só regenerar as páginas
+      regenPages(sd2.anexo, sd2.anexo_name, function(pages){
+        if(pages){ sd2.anexo_pages = pages; saveDB(); }
+        buildExportPDF(cnpj);
+      });
+      return;
+    }
+    fetchAttachment(sd2.anexo_id, function(data, name){
+      if(data){
+        sd2.anexo = data;
+        if(name && !sd2.anexo_name) sd2.anexo_name = name;
+        regenPages(data, sd2.anexo_name || name || 'anexo.pdf', function(pages){
+          if(pages){ sd2.anexo_pages = pages; saveDB(); }
+          buildExportPDF(cnpj);
+        });
+      } else {
+        buildExportPDF(cnpj); // não conseguiu baixar — exporta sem o anexo
+      }
+    });
+    return;
+  }
+  buildExportPDF(cnpj);
+}
+
+function buildExportPDF(cnpj){
   var md = getMonth(nav.year, nav.month);
   var sup = md.suppliers[cnpj];
   var nf  = md.nfs.find(function(n){ return n.cnpj===cnpj; });
@@ -1677,13 +1923,13 @@ function exportPDF(cnpj){
     var obs = sup.stepObs&&sup.stepObs[s.id]?sup.stepObs[s.id]:'';
 
     var fieldsHtml = fields.map(function(f){
-      return sdata[f.key]?'<tr><td style="padding:4px 8px;color:#5C5F70;width:40%">'+f.label+'</td><td style="padding:4px 8px;font-weight:500">'+sdata[f.key]+'</td></tr>':'';
+      return sdata[f.key]?'<tr><td style="padding:4px 8px;color:#5C5F70;width:40%">'+fieldLabel(s.id,f.key)+'</td><td style="padding:4px 8px;font-weight:500">'+sdata[f.key]+'</td></tr>':'';
     }).join('');
 
     return '<div style="margin-bottom:14px;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden">'+
       '<div style="padding:10px 14px;background:'+(st==='done'||st==='auto-done'?'#F0FDF4':st==='alert'?'#FEE2E2':'#F9FAFB')+';display:flex;align-items:center;gap:10px;border-bottom:1px solid #E5E7EB">'+
         '<span style="width:26px;height:26px;background:'+statusColor+';border-radius:6px;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700;flex-shrink:0">'+String(s.id).padStart(2,'0')+'</span>'+
-        '<span style="font-weight:600;font-size:13px;flex:1">'+s.title+'</span>'+
+        '<span style="font-weight:600;font-size:13px;flex:1">'+stepTitle(s.id)+'</span>'+
         '<span style="font-size:11px;font-weight:500;color:'+statusColor+'">'+((st==='auto-done'?'done':st)==='done'?'✓ ':'')+statusLabel[st]+'</span>'+
       '</div>'+
       ((fieldsHtml||obs)?
@@ -1695,12 +1941,12 @@ function exportPDF(cnpj){
 
   // Anexo
   var anexoHtml = '';
-  if(sd[2]&&sd[2].anexo&&sd[2].anexo_name){
+  if(sd[2]&&sd[2].anexo_name&&(sd[2].anexo||(sd[2].anexo_pages&&sd[2].anexo_pages.length))){
     var isImg = /\.(png|jpg|jpeg)$/i.test(sd[2].anexo_name);
     var pages = sd[2].anexo_pages;
 
     anexoHtml = '<div style="margin-top:20px;border-top:2px solid #E5E7EB;padding-top:16px">'+
-      '<div style="font-size:12px;font-weight:700;color:#5C5F70;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">Anexo — Etapa 02 | Recibo Digital</div>';
+      '<div style="font-size:12px;font-weight:700;color:#5C5F70;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">Anexo — Etapa 02 | '+stepTitle(2)+'</div>';
 
     if(isImg){
       anexoHtml += '<img src="'+sd[2].anexo+'" style="max-width:100%;border-radius:6px;border:1px solid #E5E7EB">';
